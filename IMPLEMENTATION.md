@@ -8,36 +8,51 @@
 
 ---
 
-## 1. 即时任务不是随机抽 Goal
+## 1. 状态编排不是一个“跟随开关”
 
-自主层会把候选任务统一转成评分问题。普通任务考虑当前需求、环境机会、准备程度、距离和重复行为惩罚；超过硬工作距离的普通任务直接失去候选资格。
+球内部有多个生活状态。状态层首先决定**哪些能力可以运行**，然后任务评分器才在允许的能力中选择具体行为。
 
-```java
-public double score(TaskCandidate c) {
-    if (c.distanceBlocks() > hardWorkRange && !c.type().isForcedPriority()) {
-        return Double.NEGATIVE_INFINITY;
-    }
+当前已有状态包括：
 
-    double distance01 = Math.min(1.0, c.distanceBlocks() / normalWorkRange);
-    if (c.distanceBlocks() > normalWorkRange) {
-        distance01 += (c.distanceBlocks() - normalWorkRange)
-                / Math.max(1.0, hardWorkRange - normalWorkRange);
-    }
-
-    double effectiveRepetitionPenalty =
-            c.repetitionPenalty() * (1.0 - c.need() * 0.90);
-
-    return c.need() * weights.need()
-            + c.opportunity() * weights.opportunity()
-            + c.readiness() * weights.readiness()
-            - distance01 * weights.distancePenalty()
-            - effectiveRepetitionPenalty * weights.repetitionPenalty();
-}
+```text
+FOLLOW_TRAVEL
+FOLLOW_CLOSE_LOCAL
+FOLLOW_LOCAL
+FOLLOW_HOME_LOCAL
+INDEPENDENT_HOME
+INDEPENDENT_BOOTSTRAP
 ```
 
-这里有一个刻意设计：**需求越高，重复惩罚越弱。**
+能力矩阵是显式代码，而不是散落在十几个 Goal 里的 if：
 
-这意味着“最近已经砍过树”只会在资源不紧缺时鼓励它换换事情做；如果当前建筑真的还缺很多木头，它不会为了追求表面上的“行为多样性”突然停工。
+```java
+case FOLLOW_TRAVEL -> EnumSet.of(
+        BallCapability.FOLLOW_PLAYER,
+        BallCapability.PICKUP_ITEMS,
+        BallCapability.PLACE_LIGHT,
+        BallCapability.DELIVER_TO_PLAYER,
+        BallCapability.CHATTER,
+        BallCapability.PLAYER_LOCATION_REPLY
+);
+
+case INDEPENDENT_HOME -> EnumSet.of(
+        BallCapability.WANDER_AROUND_HOME,
+        BallCapability.MINE,
+        BallCapability.CHOP_TREE,
+        BallCapability.FARM,
+        BallCapability.BUILD,
+        BallCapability.TRADE,
+        BallCapability.PICKUP_ITEMS,
+        BallCapability.PLACE_LIGHT,
+        BallCapability.STORE_ITEMS,
+        BallCapability.CRAFT,
+        BallCapability.RETURN_HOME,
+        BallCapability.CHATTER,
+        BallCapability.PLAYER_LOCATION_REPLY
+);
+```
+
+这让“玩家正在赶路时别突然扩农田”“在家附近才允许长期建设”这样的约束有统一入口，不需要每加一个功能就重写其他模块。
 
 ---
 
@@ -120,19 +135,7 @@ if (currentNeedsRecovery) {
 - `ProgressGoalDecisionEngine`
 - `GoalRecoveryPolicy`
 
-长期评分会综合：
-
-```text
-need
-+ unlock value
-+ inventory coverage
-+ storage coverage
-+ environment opportunity
-- effort
-- risk
-- estimated steps
-- distance
-```
+长期评分会综合需求、解锁价值、随身库存覆盖、自有仓储覆盖、环境机会、工作量、风险、预计步骤和距离。
 
 因此它能区分“眼前便宜的小事”和“虽然麻烦但会解锁后续能力的关键升级”。
 
@@ -170,55 +173,7 @@ public static String batchKey(String goalKey, ResourceDemand demand) {
 
 ---
 
-## 6. 状态编排不是一个“跟随开关”
-
-球内部有多个生活状态。状态层首先决定**哪些能力可以运行**，然后任务评分器才在允许的能力中选择具体行为。
-
-当前已有状态包括：
-
-```text
-FOLLOW_TRAVEL
-FOLLOW_CLOSE_LOCAL
-FOLLOW_LOCAL
-FOLLOW_HOME_LOCAL
-INDEPENDENT_HOME
-INDEPENDENT_BOOTSTRAP
-```
-
-能力矩阵是显式代码，而不是散落在十几个 Goal 里的 if：
-
-```java
-case FOLLOW_TRAVEL -> EnumSet.of(
-        BallCapability.FOLLOW_PLAYER,
-        BallCapability.PICKUP_ITEMS,
-        BallCapability.PLACE_LIGHT,
-        BallCapability.DELIVER_TO_PLAYER,
-        BallCapability.CHATTER,
-        BallCapability.PLAYER_LOCATION_REPLY
-);
-
-case INDEPENDENT_HOME -> EnumSet.of(
-        BallCapability.WANDER_AROUND_HOME,
-        BallCapability.MINE,
-        BallCapability.CHOP_TREE,
-        BallCapability.FARM,
-        BallCapability.BUILD,
-        BallCapability.TRADE,
-        BallCapability.PICKUP_ITEMS,
-        BallCapability.PLACE_LIGHT,
-        BallCapability.STORE_ITEMS,
-        BallCapability.CRAFT,
-        BallCapability.RETURN_HOME,
-        BallCapability.CHATTER,
-        BallCapability.PLAYER_LOCATION_REPLY
-);
-```
-
-这让“玩家正在赶路时别突然扩农田”“在家附近才允许长期建设”这样的约束有统一入口，不需要每加一个功能就重写其他模块。
-
----
-
-## 7. Forge 跟随行为已经是真实 Goal，不是文档
+## 6. Forge 跟随行为已经是真实 Goal，不是文档
 
 基础 Follow 已经接到真实 Minecraft `Goal` 与 `PathNavigation`。
 
@@ -255,7 +210,7 @@ public void tick() {
 
 ---
 
-## 8. 农田不是一个“找成熟作物”的 Goal
+## 7. 农田不是一个“找成熟作物”的 Goal
 
 农田目前已经拆成三个独立决策问题：
 
@@ -269,7 +224,7 @@ public void tick() {
 
 ---
 
-## 9. 当前真正的工程边界
+## 8. 当前真正的工程边界
 
 现阶段不是所有功能都已经拥有 Minecraft 世界执行器。
 
@@ -302,7 +257,7 @@ World Observation
 
 ---
 
-## 为什么这样拆
+## 9. 为什么这样拆
 
 如果把所有东西都写成互相独立的 Minecraft Goal，项目很快会遇到：
 
@@ -326,3 +281,52 @@ Life State
 ```
 
 目标不是把行为数量堆大，而是让行为之间真正能够共存。
+
+---
+
+# 最后放算式：这块确实最费力
+
+前面的状态、Lease、恢复、资源缺口都不是装饰，它们最后会汇到“当前到底该做什么”的评分上。
+
+自主层会把候选任务统一转成评分问题。普通任务考虑当前需求、环境机会、准备程度、距离和重复行为惩罚；超过硬工作距离的普通任务直接失去候选资格。
+
+```java
+public double score(TaskCandidate c) {
+    if (c.distanceBlocks() > hardWorkRange && !c.type().isForcedPriority()) {
+        return Double.NEGATIVE_INFINITY;
+    }
+
+    double distance01 = Math.min(1.0, c.distanceBlocks() / normalWorkRange);
+    if (c.distanceBlocks() > normalWorkRange) {
+        distance01 += (c.distanceBlocks() - normalWorkRange)
+                / Math.max(1.0, hardWorkRange - normalWorkRange);
+    }
+
+    double effectiveRepetitionPenalty =
+            c.repetitionPenalty() * (1.0 - c.need() * 0.90);
+
+    return c.need() * weights.need()
+            + c.opportunity() * weights.opportunity()
+            + c.readiness() * weights.readiness()
+            - distance01 * weights.distancePenalty()
+            - effectiveRepetitionPenalty * weights.repetitionPenalty();
+}
+```
+
+当前默认权重大致是：
+
+```text
+need              = 4.0
+opportunity       = 3.0
+readiness         = 2.0
+distance penalty  = 2.2
+repetition penalty= 3.0
+```
+
+其中有一个刻意设计：**需求越高，重复惩罚越弱。**
+
+这意味着“最近已经砍过树”只会在资源不紧缺时鼓励它换换事情做；如果当前建筑真的还缺很多木头，它不会为了追求表面上的“行为多样性”突然停工。
+
+换句话说，这个算式真正做的不是“随机挑一个高分动作”，而是在需求、机会、准备度、距离和行为多样性之间持续找平衡。
+
+> 算式太费力了，放最后看。😶
